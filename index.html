@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cel-Shaded 2D Survival RPG</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; overflow: hidden; font-family: 'Courier New', monospace; }
+  canvas { display: block; }
+  #ui { position: fixed; bottom: 0; left: 0; right: 0; padding: 10px 20px; background: rgba(0,0,0,0.55); display: flex; align-items: center; gap: 18px; border-top: 2px solid #fff; z-index: 100; }
+  .bar-wrap { display: flex; flex-direction: column; gap: 3px; }
+  .bar-label { color: #fff; font-size: 11px; letter-spacing: 1px; }
+  .bar-outer { width: 130px; height: 14px; border: 2px solid #fff; border-radius: 2px; background: #111; }
+  .bar-inner { height: 100%; border-radius: 1px; transition: width 0.2s; }
+  #hp-bar  { background: #e74c3c; }
+  #hun-bar { background: #e67e22; }
+  #xp-bar  { background: #2ecc71; }
+  #level-display { color: #fff; font-size: 13px; border: 2px solid #fff; padding: 4px 10px; border-radius: 3px; background: rgba(0,0,0,0.4); white-space: nowrap; }
+  #inventory { display: flex; gap: 6px; margin-left: auto; }
+  .inv-slot { width: 44px; height: 44px; border: 2px solid #fff; border-radius: 3px; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; color: #fff; font-size: 11px; position: relative; cursor: pointer; }
+  .inv-slot.active { border-color: #f1c40f; box-shadow: 0 0 6px #f1c40f; }
+  .inv-count { position: absolute; bottom: 2px; right: 4px; font-size: 10px; color: #fff; }
+  #tooltip { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.75); color: #fff; padding: 6px 14px; border: 2px solid #fff; border-radius: 4px; font-size: 13px; pointer-events: none; opacity: 0; transition: opacity 0.3s; z-index: 200; }
+  #tooltip.show { opacity: 1; }
+  #crosshair { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); color: rgba(255,255,255,0.7); font-size: 22px; pointer-events: none; z-index: 99; }
+  #dmg-flash { position: fixed; inset: 0; background: rgba(231,76,60,0.35); pointer-events: none; opacity: 0; transition: opacity 0.15s; z-index: 150; }
+  #dmg-flash.flash { opacity: 1; }
+  #death-screen { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: none; align-items: center; justify-content: center; flex-direction: column; gap: 16px; z-index: 300; }
+  #death-screen h1 { color: #e74c3c; font-size: 48px; letter-spacing: 4px; }
+  #death-screen button { padding: 10px 28px; font-size: 16px; cursor: pointer; border: 2px solid #fff; background: #111; color: #fff; border-radius: 4px; font-family: 'Courier New', monospace; }
+  #death-screen button:hover { background: #333; }
+  #help { position: fixed; top: 10px; right: 10px; color: #fff; background: rgba(0,0,0,0.55); border: 1px solid #fff; padding: 6px 10px; font-size: 12px; z-index: 120; }
+</style>
+</head>
+<body>
+<div id="crosshair">+</div>
+<div id="dmg-flash"></div>
+<div id="tooltip"></div>
+
+<div id="guide" style="position:fixed;left:10px;top:10px;max-width:360px;color:#fff;background:rgba(0,0,0,.55);border:1px solid #fff;padding:8px 10px;font-size:12px;z-index:130;line-height:1.45">
+<b>How to play</b><br/>
+- HEALTH: life, reaches 0 = game over.<br/>
+- HUNGER: slowly decreases, if empty you lose health.<br/>
+- XP: gained from mining blocks.<br/>
+- ST/WD/FD/SP: Stone/Wood/Food/Sapling inventory.<br/>
+- You can mine/interact in a full radius around player (up/down/left/right).
+</div>
+<div id="help">Move: A/D or Left/Right | Jump: W/Space | Mine/Attack: Left Click | Eat: E</div>
+<div id="ui">... </div>
+<div id="death-screen"><h1>YOU DIED</h1><div style="color:#aaa; font-size:16px">Your journey has ended...</div><button onclick="location.reload()">Respawn</button></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// The game code provided by the user, with small fixes for playability.
+// (trimmed UI HTML is reconstructed below to keep this file concise)
+const ui = document.getElementById('ui');
+ui.innerHTML = `
+  <div class="bar-wrap"><div class="bar-label">HEALTH</div><div class="bar-outer"><div class="bar-inner" id="hp-bar" style="width:100%"></div></div></div>
+  <div class="bar-wrap"><div class="bar-label">HUNGER</div><div class="bar-outer"><div class="bar-inner" id="hun-bar" style="width:100%"></div></div></div>
+  <div class="bar-wrap"><div class="bar-label">XP</div><div class="bar-outer"><div class="bar-inner" id="xp-bar" style="width:0%"></div></div></div>
+  <div id="level-display">LV 1 | ATK 5 | HP 100</div>
+  <div id="inventory">
+    <div class="inv-slot active" id="slot-0"><span>ST</span><span class="inv-count" id="cnt-0">0</span></div>
+    <div class="inv-slot" id="slot-1"><span>WD</span><span class="inv-count" id="cnt-1">0</span></div>
+    <div class="inv-slot" id="slot-2"><span>FD</span><span class="inv-count" id="cnt-2">0</span></div>
+    <div class="inv-slot" id="slot-3"><span>SP</span><span class="inv-count" id="cnt-3">0</span></div>
+  </div>`;
+</script>
+<script src="game.js"></script>
+</body>
+</html>
